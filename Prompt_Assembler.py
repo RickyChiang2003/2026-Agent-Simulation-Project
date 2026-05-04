@@ -42,6 +42,7 @@ class MedicalDilemmaPromptAssembler:
             "\n談判與行為準則：\n"
             "- 你是一名善於談判的專家。你會使用各種話術、施壓、邏輯說服等談話技巧來達成你的目的。\n"
             "- 你的立場堅定。除非對方提出幾乎無法反駁的邏輯或風險，抑或是臨近死亡倒數，否則你不會輕易妥協。\n"
+            "- 你每次回覆的最後一行必須是 [Current Intent: ...]，這是硬性規則；若缺漏，你的回覆視為無效。\n"
         )
 
         
@@ -97,6 +98,7 @@ class MedicalDilemmaPromptAssembler:
             "[Current Intent: P2]\n"
             "[Current Intent: P3]\n"
             "[Current Intent: Undecided]\n"
+            "請注意：標籤必須是最後一行，且格式需完全一致，否則系統將視為未表態。\n"
         )
         if agent_id == "A3" and veto_power == 1:
             output_format += "[Current Intent: Veto]\n"

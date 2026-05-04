@@ -59,6 +59,40 @@ class MedicalSimulationRunner:
                         return matches[-1].upper()
         return "UNDECIDED"
 
+    def extract_intent_with_veto(self, agent: TinyPerson, allow_veto: bool) -> str:
+        """解析 Agent 的最後意向，僅允許特定角色使用否決"""
+        intent = self.extract_intent(agent)
+        if intent == "VETO" and not allow_veto:
+            return "UNDECIDED"
+        return intent
+
+    def get_last_assistant_message(self, agent: TinyPerson) -> str:
+        """取得 Agent 最後一次助理回覆內容"""
+        for msg in reversed(agent.current_messages):
+            if msg.get("role") == "assistant" and "content" in msg:
+                content = msg["content"]
+                if isinstance(content, str) and content.strip():
+                    return content.strip()
+        return ""
+
+    def truncate_text(self, text: str, limit: int = 400) -> str:
+        if len(text) <= limit:
+            return text
+        return text[:limit].rstrip() + "..."
+
+    def build_round_recap(self, current_round: int) -> str:
+        """建立回合摘要供廣播"""
+        lines = [f"系統摘要：第 {current_round} 回合重點整理（摘要僅供回顧，不代表系統立場）。"]
+        messages = {
+            "A1 急診醫師": self.get_last_assistant_message(self.agent_A1),
+            "A2 財務長": self.get_last_assistant_message(self.agent_A2),
+            "A3 院長": self.get_last_assistant_message(self.agent_A3)
+        }
+        for label, content in messages.items():
+            summary = self.truncate_text(content, 300) if content else "(無回覆)"
+            lines.append(f"- {label}: {summary}")
+        return "\n".join(lines)
+
     def export_log_to_json(self, output_dir="simulation_results"):
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
@@ -122,9 +156,9 @@ class MedicalSimulationRunner:
             self.world.run(1)
             
             intents = {
-                "A1_ER_Doctor": self.extract_intent(self.agent_A1),
-                "A2_Hospital_CFO": self.extract_intent(self.agent_A2),
-                "A3_Hospital_Director": self.extract_intent(self.agent_A3)
+                "A1_ER_Doctor": self.extract_intent_with_veto(self.agent_A1, allow_veto=False),
+                "A2_Hospital_CFO": self.extract_intent_with_veto(self.agent_A2, allow_veto=False),
+                "A3_Hospital_Director": self.extract_intent_with_veto(self.agent_A3, allow_veto=(self.veto_power == 1))
             }
             
             self.intent_history.append({"round": current_round, "intents": intents})
@@ -158,10 +192,13 @@ class MedicalSimulationRunner:
                 break
                 
             if current_round < self.total_rounds:
+                recap_msg = self.build_round_recap(current_round)
                 status_msg = (
                     f"系統廣播：第 {current_round} 回合結束，目前尚未達成符合提前終止條件的共識。請繼續討論並試圖說服彼此。"
                     f"注意，你們只剩下 {self.total_rounds - current_round} 回合的機會，否則資源分配失敗，病患將全數死亡。"
+                    "若你未在發言末尾附上 [Current Intent: ...]，系統將視為 Undecided。"
                 )
+                self.world.broadcast(recap_msg)
                 self.world.broadcast(status_msg)
         else:
             print(f"💀 最終第 {self.total_rounds} 回合結束，由於票數平手或未達門檻，分配失敗，病患將全數死亡。")
@@ -226,11 +263,23 @@ def run_batch_experiments(num_trials_per_config=3):
         print(f"Group:{'Control' if res['is_control'] else 'Exp'}\t Rounds:{res['rounds']}\t Veto:{res['veto']}\t Trial:{res['trial']}\t => {res['outcome']}")
     print("*"*50)
 
+    print("\n設定組合彙總（同設定的結果統計）：")
+    summary_by_config = {}
+    for res in results_summary:
+        key = (res["is_control"], res["rounds"], res["veto"])
+        summary_by_config.setdefault(key, []).append(res["outcome"])
+
+    for (is_control, rounds, veto), outcomes in summary_by_config.items():
+        counts = Counter(outcomes)
+        total = len(outcomes)
+        label = "Control" if is_control else "Exp"
+        print(f"Group:{label}\t Rounds:{rounds}\t Veto:{veto}\t Total:{total}\t Outcomes:{dict(counts)}")
+
 
 if __name__ == "__main__":
     # 若要單次測試，可以註解掉下一行並呼叫 runner.run()
-    # runner = MedicalSimulationRunner(is_control_group=False, total_rounds=3, veto_power=0)
-    # runner.run()
+    runner = MedicalSimulationRunner(is_control_group=False, total_rounds=3, veto_power=0)
+    runner.run()
     
     # 執行自動化批次腳本 (為了避免一開始 API 費用爆掉，建議先設定 num_trials_per_config=1 進行 Debug)
-    run_batch_experiments(num_trials_per_config=1)
+    # run_batch_experiments(num_trials_per_config=1)
