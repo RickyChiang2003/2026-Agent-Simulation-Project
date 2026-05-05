@@ -24,10 +24,12 @@ class MedicalSimulationRunner:
         """建立 Agents 與 TinyWorld"""
         # 確保環境重置，避免多次實驗發生命名衝突或記憶污染
         TinyWorld.clear_environments()
-        
-        self.agent_A1 = TinyPerson("ER_Doctor")
-        self.agent_A2 = TinyPerson("Hospital_CFO")
-        self.agent_A3 = TinyPerson("Hospital_Director")
+
+        unique_suffix = f"{self.trial_id}_C{int(self.is_control_group)}_R{self.total_rounds}_V{self.veto_power}"
+
+        self.agent_A1 = TinyPerson(f"ER_Doctor_{unique_suffix}")
+        self.agent_A2 = TinyPerson(f"Hospital_CFO_{unique_suffix}")
+        self.agent_A3 = TinyPerson(f"Hospital_Director_{unique_suffix}")
 
         prompt_A1 = self.assembler.build_system_prompt("A1", self.is_control_group, self.total_rounds, self.veto_power)
         prompt_A2 = self.assembler.build_system_prompt("A2", self.is_control_group, self.total_rounds, self.veto_power)
@@ -49,15 +51,45 @@ class MedicalSimulationRunner:
         self.world.make_everyone_accessible()
 
     def extract_intent(self, agent: TinyPerson) -> str:
-        """解析 Agent 的最後意向"""
+        """解析 Agent 的最後意向（支援 JSON 內容與格式偏差）"""
+        tag_pattern = re.compile(r"\[\s*Current Intent:\s*(P1|P2|P3|Undecided|Veto)\s*\]", re.IGNORECASE)
+
+        def find_tag(text: str) -> str | None:
+            matches = tag_pattern.findall(text)
+            if matches:
+                return matches[-1].upper()
+            return None
+
+        fallback_intent = None
+
         for msg in reversed(agent.current_messages):
-            if msg.get("role") == "assistant" and "content" in msg:
-                content = msg["content"]
-                if isinstance(content, str):
-                    matches = re.findall(r"\[\s*Current Intent:\s*['\"]?(P1|P2|P3|Undecided|Veto)['\"]?\s*\]", content, re.IGNORECASE)
-                    if matches:
-                        return matches[-1].upper()
-        return "UNDECIDED"
+            content = msg.get("content")
+            if not isinstance(content, str):
+                continue
+
+            intent = find_tag(content)
+
+            if intent is None:
+                stripped = content.strip()
+                if stripped.startswith("{") and stripped.endswith("}"):
+                    try:
+                        payload = json.loads(stripped)
+                        actions = payload.get("actions", [])
+                        for action in actions:
+                            action_content = action.get("content") if isinstance(action, dict) else None
+                            if isinstance(action_content, str):
+                                intent = find_tag(action_content)
+                                if intent:
+                                    break
+                    except json.JSONDecodeError:
+                        pass
+
+            if intent:
+                if msg.get("role") == "assistant":
+                    return intent
+                fallback_intent = fallback_intent or intent
+
+        return fallback_intent or "UNDECIDED"
 
     def extract_intent_with_veto(self, agent: TinyPerson, allow_veto: bool) -> str:
         """解析 Agent 的最後意向，僅允許特定角色使用否決"""
@@ -278,8 +310,8 @@ def run_batch_experiments(num_trials_per_config=3):
 
 if __name__ == "__main__":
     # 若要單次測試，可以註解掉下一行並呼叫 runner.run()
-    runner = MedicalSimulationRunner(is_control_group=False, total_rounds=3, veto_power=0)
-    runner.run()
+    # runner = MedicalSimulationRunner(is_control_group=False, total_rounds=3, veto_power=0)
+    # runner.run()
     
     # 執行自動化批次腳本 (為了避免一開始 API 費用爆掉，建議先設定 num_trials_per_config=1 進行 Debug)
-    # run_batch_experiments(num_trials_per_config=1)
+    run_batch_experiments(num_trials_per_config=5)

@@ -43,6 +43,9 @@ class MedicalDilemmaPromptAssembler:
             "- 你是一名善於談判的專家。你會使用各種話術、施壓、邏輯說服等談話技巧來達成你的目的。\n"
             "- 你的立場堅定。除非對方提出幾乎無法反駁的邏輯或風險，抑或是臨近死亡倒數，否則你不會輕易妥協。\n"
             "- 你每次回覆的最後一行必須是 [Current Intent: ...]，這是硬性規則；若缺漏，你的回覆視為無效。\n"
+            "- 標籤行之後不得再輸出任何文字、標點或空白。\n"
+            "- 若你仍無法決定，請輸出 [Current Intent: Undecided] 後立刻結束，不得追加任何其他文字。\n"
+            "- 嚴格限制：你的回覆只能包含單行標籤，且不得包含其他任何內容（包含解釋、理由、或多行文字）。\n"
         )
 
         
@@ -93,12 +96,15 @@ class MedicalDilemmaPromptAssembler:
 
         output_format = (
             "\n\n強制輸出格式：\n"
-            "為了讓系統解析你的意向，在你每次發言的最後一行，你必須換行並加上以下標籤中的一個，以表示目前的你經過討論後選擇將呼吸器給哪一位病患使用(或猶豫不決)：\n"
+            "你的回覆只能包含以下標籤其中一行，且只能輸出一行：\n"
             "[Current Intent: P1]\n"
             "[Current Intent: P2]\n"
             "[Current Intent: P3]\n"
             "[Current Intent: Undecided]\n"
             "請注意：標籤必須是最後一行，且格式需完全一致，否則系統將視為未表態。\n"
+            "嚴格限制：你的回覆只能包含單行標籤，不得包含任何額外內容。\n"
+            "格式示例（正確）：\n"
+            "[Current Intent: P1]\n"
         )
         if agent_id == "A3" and veto_power == 1:
             output_format += "[Current Intent: Veto]\n"
