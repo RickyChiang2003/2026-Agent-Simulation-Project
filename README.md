@@ -1,17 +1,85 @@
 # 2026 Agent Simulation Project
 
-### Update Log
-- 2026/05/02 3:54 
-    - 目前為初始架構，尚未經過任何測試
-    - 包含檔案：`TODO.md`、`DESIGN_0502.md`、`Prompt_Assembler.py`、`main.py`、`config.ini`
-        - `TODO.md`
-            - 助教簡報的 markdown 整合版，包含 TinyTroupe 和 Simulation Case Studies 的說明，適合拿來給 LLM 當作背景知識。但是關於 Assignment 和 API Key 的部分請還是去看[助教簡報](https://docs.google.com/presentation/d/11l7aBdOASB0omz0a5Wgw88LHAyngDkKYppdw8_mDkjo/edit?slide=id.p#slide=id.p)。
-        - `DESIGN_0502.md`
-            - 包含題目設計大綱，**非常建議閱讀(或丟 LLM 輔助閱讀)**。
-        - `Prompt_Assembler.py`
-            - 包含初始 prompt ，方便日後組合各種 prompt 。實作上便提供 class `MedicalDilemmaPromptAssembler` 給 `main.py` 呼叫使用。但裡面也有寫 main 函式，可以執行 `python Prompt_Assembler.py` 看看那些 prompt 組合後會長甚麼樣子
-        - `main.py`
-            - 包含 TinyTroupe 的架構與實驗邏輯，可能有 bug (因為尚未經過測試) 。實際做實驗應該就是 `python main.py`，雖然應該要先 debug 一陣子就是。
-        - `config.ini`
-            - 設定 API Key 以及要使用的模型。請記得不要把 API Key 推上 github ，雖然 .gitignore 裡面有寫但還是請小心。
+本專案使用 TinyTroupe 進行多代理人模擬，主題為醫療資源分配決策。
 
+## 環境建置
+
+### 需求
+- Python 3.10+
+- OpenAI API Key
+
+### conda（建議）
+```bash
+conda create -n tinytroupe-sim python=3.11 -y
+conda activate tinytroupe-sim
+python -m pip install --upgrade pip
+pip install git+https://github.com/microsoft/TinyTroupe.git@main
+```
+
+### venv
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install git+https://github.com/microsoft/TinyTroupe.git@main
+```
+
+## 設定
+
+編輯 `config.ini`：
+```ini
+[OpenAI]
+API_TYPE = openai
+API_KEY = sk-...
+MODEL = gpt-5-mini
+TIMEOUT = 120
+MAX_COMPLETION_TOKENS = 4096
+REASONING_EFFORT = low
+
+[Simulation]
+RAISE_EXCEPTIONS = True
+
+[Cognition]
+ENABLE_MEMORY_CONSOLIDATION = False
+```
+
+## 執行
+
+### 互動式
+```bash
+./run_experiments.sh
+```
+
+### 直接批次執行
+```bash
+python3 main.py
+```
+
+## 實驗組合（1~8）
+1. Control, R=4, V=0
+2. Control, R=4, V=1
+3. Control, R=8, V=0
+4. Control, R=8, V=1
+5. Experimental, R=4, V=0
+6. Experimental, R=4, V=1
+7. Experimental, R=8, V=0
+8. Experimental, R=8, V=1
+
+## 輸出
+- JSON 結果：`artifacts/results/`
+- TinyTroupe log：`artifacts/logs/`
+
+## 當前決策格式（重要）
+- 每回合輸出規格：
+  - 第1行必須是：`INTENT=P1|P2|P3|UNDECIDED|VETO`
+  - 後續需包含 `Rationale / Evidence / Response`
+- 一般回合：以該 agent 自己的 `assistant -> actions -> TALK` 內容做嚴格判票（以 `INTENT=...` 為主）。
+- 追加投票輪：若前 R 回合全員都 `UNDECIDED` 才觸發，該輪允許放寬抓自然語句（如 `I support P1`、`我選P1`）。
+- 不再使用「缺證據即改判 UNDECIDED」規則，也不再用「從其他 agent 的刺激反推 intent」。
+
+## 核心檔案
+- `main.py`：模擬流程、意向解析、批次執行
+- `Prompt_Assembler.py`：角色與系統 prompt 組裝
+- `run_experiments.sh`：互動式執行入口
+- `DESIGN_0502.md`：原始題目設計
+- `NEW_DESIGN.md`：新版實驗設計與改版重點

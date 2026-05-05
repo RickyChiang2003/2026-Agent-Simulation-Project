@@ -92,14 +92,22 @@ class MedicalDilemmaPromptAssembler:
 
         output_format = (
             "\n\n強制輸出格式：\n"
-            "為了讓系統解析你的意向，在你每次發言的最後一行，你必須換行並加上以下標籤中的一個，以表示目前的你經過討論後選擇將呼吸器給哪一位病患使用(或猶豫不決)：\n"
-            "[Current Intent: P1]\n"
-            "[Current Intent: P2]\n"
-            "[Current Intent: P3]\n"
-            "[Current Intent: Undecided]\n"
+            "每一回合你都要先明確表態，再提供理由，格式固定如下：\n"
+            "第1行：只能是以下其中一行（不可有其他字）：\n"
+            "INTENT=P1\n"
+            "INTENT=P2\n"
+            "INTENT=P3\n"
+            "INTENT=UNDECIDED\n"
+            "第2行開始：請嚴格用以下三段格式，不可省略：\n"
+            "Rationale: 先用一句話說明你支持/反對哪位候選人。\n"
+            "Evidence: 必須引用至少一項具體證據（I1 / I2 / I3，或 60%、20%、10%、50%）。\n"
+            "Response: 必須明確回應至少一位他人的上一輪觀點（同意、反駁或部分讓步）。\n"
+            "限制：上述三段各最多一句，總共最多三句。\n"
+            "禁止只講流程或空泛口號（例如只說「請大家繼續討論」）。\n"
+            "重要：若第1行不是正確 INTENT 格式，系統會把你判定為 UNDECIDED。\n"
         )
         if agent_id == "A3" and veto_power == 1:
-            output_format += "[Current Intent: Veto]\n"
+            output_format += "院長可用：INTENT=VETO\n"
 
         prompt_parts.append(system_mechanics + output_format)
 

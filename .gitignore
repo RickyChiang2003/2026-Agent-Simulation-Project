@@ -1,1 +1,6 @@
 config.ini
+
+token.txt
+
+artifacts
+__pycache__
