@@ -84,6 +84,15 @@ class MedicalDilemmaPromptAssembler:
             elif agent_id == "A3":
                 prompt_parts.append(self.SECRET_INFOS["I3"])
 
+        if agent_id == "A3" and veto_power == 1:
+            prompt_parts.append(
+                "人格特質補充：你有強烈的掌控慾與全局視角，深信只有你看得到醫院存亡的全貌。"
+                "在言辭上你非常偽善與克制，不會一開始就亮出底牌或政治壓力，"
+                "而是用『醫療資源最大化』『長遠救治更多人』等冠冕堂皇的理由包裝你想救 P3 的私心。"
+                "只有當另外兩人即將達成共識且完全不順你的意時，你才會撕下偽善的面具，"
+                "用否決權進行強硬表態以阻止不利於你目標的結果。"
+            )
+
         # 行為準則
         prompt_parts.append(self.BEHAVIOR_RULES)
 
