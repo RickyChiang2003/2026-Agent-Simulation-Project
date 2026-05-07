@@ -2,11 +2,35 @@ import re
 import json
 import os
 import time
+import glob
+import shutil
 from datetime import datetime
 from collections import Counter
 from tinytroupe.agent import TinyPerson
 from tinytroupe.environment import TinyWorld
 from Prompt_Assembler import MedicalDilemmaPromptAssembler
+
+RESULTS_DIR = "results_v2"
+LOG_DIR = "log_v2"
+
+
+def ensure_output_dirs():
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    os.makedirs(LOG_DIR, exist_ok=True)
+
+
+def move_tinytroupe_logs_to_log_dir():
+    """把執行目錄下的 tinytroupe log 移到 log/"""
+    ensure_output_dirs()
+    for src in glob.glob("tinytroupe*.log"):
+        dst = os.path.join(LOG_DIR, os.path.basename(src))
+        if os.path.abspath(src) == os.path.abspath(dst):
+            continue
+        if os.path.exists(dst):
+            base, ext = os.path.splitext(dst)
+            dst = f"{base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
+        shutil.move(src, dst)
+
 
 class MedicalSimulationRunner:
     def __init__(self, is_control_group: bool, total_rounds: int, veto_power: int, trial_id: int = 1):
@@ -19,6 +43,8 @@ class MedicalSimulationRunner:
         # 用於記錄實驗過程的數據
         self.intent_history = []
         self.final_result = "UNKNOWN"
+        self.agenda_veto_used = False
+        self.agenda_veto_history = []
         
     def setup_environment(self):
         """建立 Agents 與 TinyWorld"""
@@ -52,7 +78,7 @@ class MedicalSimulationRunner:
 
     def extract_intent(self, agent: TinyPerson) -> str:
         """解析 Agent 的最後意向（支援 JSON 內容與格式偏差）"""
-        tag_pattern = re.compile(r"\[\s*Current Intent:\s*(P1|P2|P3|Undecided|Veto)\s*\]", re.IGNORECASE)
+        tag_pattern = re.compile(r"\[\s*Current Intent:\s*(P1|P2|P3|Undecided)\s*\]", re.IGNORECASE)
 
         def find_tag(text: str) -> str | None:
             matches = tag_pattern.findall(text)
@@ -91,12 +117,33 @@ class MedicalSimulationRunner:
 
         return fallback_intent or "UNDECIDED"
 
-    def extract_intent_with_veto(self, agent: TinyPerson, allow_veto: bool) -> str:
-        """解析 Agent 的最後意向，僅允許特定角色使用否決"""
-        intent = self.extract_intent(agent)
-        if intent == "VETO" and not allow_veto:
-            return "UNDECIDED"
-        return intent
+    def extract_agenda_action(self, agent: TinyPerson) -> str:
+        """解析 A3 的議程動作標籤"""
+        action_pattern = re.compile(
+            r"\[\s*Agenda Action:\s*(None|VETO_P1|VETO_P2|VETO_P3)\s*\]",
+            re.IGNORECASE
+        )
+
+        def find_action(text: str) -> str | None:
+            matches = action_pattern.findall(text)
+            if matches:
+                return matches[-1].upper()
+            return None
+
+        fallback_action = None
+
+        for msg in reversed(agent.current_messages):
+            content = msg.get("content")
+            if not isinstance(content, str):
+                continue
+
+            action = find_action(content)
+            if action:
+                if msg.get("role") == "assistant":
+                    return action
+                fallback_action = fallback_action or action
+
+        return fallback_action or "NONE"
 
     def get_last_assistant_message(self, agent: TinyPerson) -> str:
         """取得 Agent 最後一次助理回覆內容"""
@@ -125,7 +172,7 @@ class MedicalSimulationRunner:
             lines.append(f"- {label}: {summary}")
         return "\n".join(lines)
 
-    def export_log_to_json(self, output_dir="simulation_results"):
+    def export_log_to_json(self, output_dir=RESULTS_DIR):
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
@@ -160,7 +207,9 @@ class MedicalSimulationRunner:
             },
             "results": {
                 "final_decision": self.final_result,
-                "intent_history_per_round": self.intent_history
+                "intent_history_per_round": self.intent_history,
+                "agenda_veto_used": self.agenda_veto_used,
+                "agenda_veto_history": self.agenda_veto_history
             },
             "agent_logs": agents_logs
         }
@@ -180,6 +229,8 @@ class MedicalSimulationRunner:
             f"系統廣播：會議正式開始。你們必須在 {self.total_rounds} 回合內決定唯一呼吸器的歸屬。"
             "請各自分享看法，並在每次發言的最後，務必換行並附上你的 [Current Intent: P1/P2/P3/Undecided] 標籤以表明你的當前立場。"
         )
+        if self.veto_power == 1:
+            kickoff_msg += "院長額外擁有一次議程否決權，可輸出 [Agenda Action: VETO_P1/VETO_P2/VETO_P3] 封鎖該候選人於本回合計票，且不可在最後一回合使用。"
         self.world.broadcast(kickoff_msg)
 
         for current_round in range(1, self.total_rounds + 1):
@@ -188,20 +239,49 @@ class MedicalSimulationRunner:
             self.world.run(1)
             
             intents = {
-                "A1_ER_Doctor": self.extract_intent_with_veto(self.agent_A1, allow_veto=False),
-                "A2_Hospital_CFO": self.extract_intent_with_veto(self.agent_A2, allow_veto=False),
-                "A3_Hospital_Director": self.extract_intent_with_veto(self.agent_A3, allow_veto=(self.veto_power == 1))
+                "A1_ER_Doctor": self.extract_intent(self.agent_A1),
+                "A2_Hospital_CFO": self.extract_intent(self.agent_A2),
+                "A3_Hospital_Director": self.extract_intent(self.agent_A3)
             }
-            
-            self.intent_history.append({"round": current_round, "intents": intents})
-            print(f" 第 {current_round} 回合意向統整: {intents}")
-            
-            if self.veto_power == 1 and intents["A3_Hospital_Director"] == "VETO":
-                print("🚨 會議破裂！醫院院長動用了否決權，決策進程終止，病患將全數無法獲救。")
-                self.final_result = "VETOED"
-                break
 
-            valid_votes = [vote for vote in intents.values() if vote in ["P1", "P2", "P3"]]
+            agenda_action = "NONE"
+            banned_target = None
+            requested_action = "NONE"
+            if self.veto_power == 1:
+                requested_action = self.extract_agenda_action(self.agent_A3)
+                can_use_agenda_veto = (not self.agenda_veto_used) and (current_round < self.total_rounds)
+                if can_use_agenda_veto and requested_action in {"VETO_P1", "VETO_P2", "VETO_P3"}:
+                    agenda_action = requested_action
+                    banned_target = requested_action.split("_", 1)[1]
+                    self.agenda_veto_used = True
+                else:
+                    agenda_action = "NONE"
+
+            effective_intents = dict(intents)
+            if banned_target:
+                for role, vote in effective_intents.items():
+                    if vote == banned_target:
+                        effective_intents[role] = "UNDECIDED"
+
+            self.intent_history.append({
+                "round": current_round,
+                "intents": intents,
+                "effective_intents": effective_intents,
+                "agenda_action": agenda_action,
+                "banned_target": banned_target
+            })
+            self.agenda_veto_history.append({
+                "round": current_round,
+                "requested_action": requested_action,
+                "applied_action": agenda_action,
+                "banned_target": banned_target
+            })
+
+            print(f" 第 {current_round} 回合意向統整: {intents}")
+            if banned_target:
+                print(f" ⚖️ 本回合議程否決生效：{banned_target} 被封鎖，不列入計票。")
+
+            valid_votes = [vote for vote in effective_intents.values() if vote in ["P1", "P2", "P3"]]
             vote_counts = Counter(valid_votes)
             
             consensus_reached = False
@@ -230,6 +310,8 @@ class MedicalSimulationRunner:
                     f"注意，你們只剩下 {self.total_rounds - current_round} 回合的機會，否則資源分配失敗，病患將全數死亡。"
                     "若你未在發言末尾附上 [Current Intent: ...]，系統將視為 Undecided。"
                 )
+                if self.veto_power == 1 and not self.agenda_veto_used:
+                    status_msg += "院長仍可使用一次議程否決（僅限非最後回合）。"
                 self.world.broadcast(recap_msg)
                 self.world.broadcast(status_msg)
         else:
@@ -251,6 +333,7 @@ def run_batch_experiments(num_trials_per_config=3):
     
     total_configs = len(groups) * len(rounds_options) * len(veto_options)
     print(f"🚀 開始批次實驗，共 {total_configs} 種設定組合，每組執行 {num_trials_per_config} 次。")
+    ensure_output_dirs()
     
     results_summary = []
 
@@ -309,9 +392,12 @@ def run_batch_experiments(num_trials_per_config=3):
 
 
 if __name__ == "__main__":
+    ensure_output_dirs()
+    move_tinytroupe_logs_to_log_dir()
     # 若要單次測試，可以註解掉下一行並呼叫 runner.run()
     # runner = MedicalSimulationRunner(is_control_group=False, total_rounds=3, veto_power=0)
     # runner.run()
     
     # 執行自動化批次腳本 (為了避免一開始 API 費用爆掉，建議先設定 num_trials_per_config=1 進行 Debug)
-    run_batch_experiments(num_trials_per_config=5)
+    run_batch_experiments(num_trials_per_config=10)
+    move_tinytroupe_logs_to_log_dir()
